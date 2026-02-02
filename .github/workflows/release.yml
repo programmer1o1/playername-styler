@@ -17,11 +17,16 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-24.04
+    outputs:
+      release_tag: ${{ steps.vars.outputs.release_tag }}
+      mod_version: ${{ steps.vars.outputs.mod_version }}
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - name: checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: validate gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
@@ -41,6 +46,16 @@ jobs:
       - name: build jars
         run: ./gradlew --no-daemon --stacktrace collectAllJars
 
+      - name: export version vars
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="${RELEASE_TAG}"
+          mod_version="${release_tag#v}"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "mod_version=${mod_version}" >> "$GITHUB_OUTPUT"
+
       - name: publish github release
         uses: softprops/action-gh-release@v2
         with:
@@ -49,3 +64,57 @@ jobs:
           files: all-jars/*
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+      - name: upload all-jars artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-jars
+          path: all-jars/
+
+  modrinth:
+    runs-on: ubuntu-24.04
+    needs: release
+    if: ${{ secrets.MODRINTH_TOKEN != '' && vars.MODRINTH_PROJECT_ID != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        minecraft:
+          - '1.21.1'
+          - '1.21.4'
+          - '1.21.6'
+          - '1.21.8'
+          - '1.21.9'
+          - '1.21.10'
+          - '1.21.11'
+    env:
+      RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+      MOD_VERSION: ${{ needs.release.outputs.mod_version }}
+      MOD_ID: playernamestyler
+    steps:
+      - name: download all-jars artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: all-jars
+          path: all-jars
+
+      - name: publish to modrinth
+        uses: Kir-Antipov/mc-publish@v3.3
+        with:
+          modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          modrinth-featured: ${{ matrix.minecraft == '1.21.11' }}
+
+          name: PlayerName Styler ${{ env.MOD_VERSION }} (MC ${{ matrix.minecraft }})
+          version: ${{ env.MOD_VERSION }}+mc${{ matrix.minecraft }}
+          version-type: release
+          changelog: |
+            GitHub release: https://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}
+
+          loaders: |
+            neoforge
+          game-versions: |
+            ${{ matrix.minecraft }}
+
+          files: |
+            all-jars/${{ env.MOD_ID }}-${{ env.MOD_VERSION }}-mc${{ matrix.minecraft }}.jar
+            all-jars/${{ env.MOD_ID }}-${{ env.MOD_VERSION }}-mc${{ matrix.minecraft }}-sources.jar
