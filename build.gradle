@@ -114,6 +114,10 @@ tasks.register('compileNeoForgeCompat', JavaCompile) {
     classpath = sourceSets.main.compileClasspath
     destinationDirectory.set(neoForgeCompatOutputDir)
     options.encoding = 'UTF-8'
+    // Ensure the embedded shim class is compatible with Minecraft's Java 21 runtime,
+    // regardless of what JDK happens to be running Gradle.
+    options.release.set(21)
+    javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
 }
 
 tasks.named('processResources').configure {
