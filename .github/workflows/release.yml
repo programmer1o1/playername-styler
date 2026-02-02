@@ -74,7 +74,6 @@ jobs:
   modrinth:
     runs-on: ubuntu-24.04
     needs: release
-    if: ${{ vars.MODRINTH_PROJECT_ID != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -91,13 +90,28 @@ jobs:
       MOD_VERSION: ${{ needs.release.outputs.mod_version }}
       MOD_ID: playernamestyler
       MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-      MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
+      MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID || secrets.MODRINTH_PROJECT_ID }}
     steps:
       - name: download all-jars artifact
         uses: actions/download-artifact@v4
         with:
           name: all-jars
           path: all-jars
+
+      - name: debug Modrinth config
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${MODRINTH_PROJECT_ID:-}" ]]; then
+            echo "MODRINTH_PROJECT_ID: set (length=${#MODRINTH_PROJECT_ID})"
+          else
+            echo "MODRINTH_PROJECT_ID: NOT set (set repo variable MODRINTH_PROJECT_ID or secret MODRINTH_PROJECT_ID)"
+          fi
+          if [[ -n "${MODRINTH_TOKEN:-}" ]]; then
+            echo "MODRINTH_TOKEN: set"
+          else
+            echo "MODRINTH_TOKEN: NOT set (set repo secret MODRINTH_TOKEN)"
+          fi
 
       - name: publish to modrinth
         if: ${{ env.MODRINTH_TOKEN != '' && env.MODRINTH_PROJECT_ID != '' }}
@@ -111,6 +125,13 @@ jobs:
           version: ${{ env.MOD_VERSION }}+mc${{ matrix.minecraft }}
           version-type: release
           changelog: |
+            # 2.0.0 Major Update
+            - Placeholder registry API + more built-in placeholders
+            - Gradient/rainbow tags + hex/format styling support
+            - Text-display nameplates by default (armor-stand fallback) with smoother interpolation
+            - Prefix/suffix placeholders in tab + above-head name
+            - Stonecutter multi-version builds for MC 1.21.1–1.21.11 with version-compat shims
+            - CI workflow + collectAllJars outputs per-version jars (and sources)
             GitHub release: https://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}
 
           loaders: |

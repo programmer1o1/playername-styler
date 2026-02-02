@@ -43,4 +43,3 @@ Config file: `config/playernamestyler-common.toml`
 - **Minecraft:** 1.21.1–1.21.11 (separate build per listed version)
 
 ![Example of Styled Nickname](https://cdn.modrinth.com/data/cached_images/f3ed860f50aafefa2776d13cbd735951780ad2c4.png)
-
