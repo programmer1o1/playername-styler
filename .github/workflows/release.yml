@@ -74,7 +74,7 @@ jobs:
   modrinth:
     runs-on: ubuntu-24.04
     needs: release
-    if: ${{ secrets.MODRINTH_TOKEN != '' && vars.MODRINTH_PROJECT_ID != '' }}
+    if: ${{ vars.MODRINTH_PROJECT_ID != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +90,8 @@ jobs:
       RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
       MOD_VERSION: ${{ needs.release.outputs.mod_version }}
       MOD_ID: playernamestyler
+      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+      MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
     steps:
       - name: download all-jars artifact
         uses: actions/download-artifact@v4
@@ -98,10 +100,11 @@ jobs:
           path: all-jars
 
       - name: publish to modrinth
+        if: ${{ env.MODRINTH_TOKEN != '' && env.MODRINTH_PROJECT_ID != '' }}
         uses: Kir-Antipov/mc-publish@v3.3
         with:
-          modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
-          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          modrinth-id: ${{ env.MODRINTH_PROJECT_ID }}
+          modrinth-token: ${{ env.MODRINTH_TOKEN }}
           modrinth-featured: ${{ matrix.minecraft == '1.21.11' }}
 
           name: PlayerName Styler ${{ env.MOD_VERSION }} (MC ${{ matrix.minecraft }})
