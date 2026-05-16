@@ -49,6 +49,9 @@ public class NicknameCommand {
                 .then(Commands.literal("reload")
                         .requires(src -> CommandSourceCompat.hasPermission(src, 2))
                         .executes(ctx -> NicknameCommand.reloadNicknames(ctx.getSource())))
+                .then(Commands.literal("cleartags")
+                        .requires(src -> CommandSourceCompat.hasPermission(src, 2))
+                        .executes(ctx -> NicknameCommand.clearTags(ctx.getSource())))
                 .then(Commands.argument("nickname", StringArgumentType.greedyString())
                         .executes(ctx -> NicknameCommand.setNickname(ctx.getSource(), StringArgumentType.getString(ctx, "nickname"))))
                 .executes(ctx -> NicknameCommand.showCurrentNickname(ctx.getSource())));
@@ -108,6 +111,16 @@ public class NicknameCommand {
         String message = "Reloaded nicknames.json and refreshed " + refreshed + " player(s).";
         src.sendSuccess(() -> Component.literal(message), false);
         return 1;
+    }
+
+    private static int clearTags(CommandSourceStack src) {
+        int removed = NicknameEvents.cleanupAllNameplates(src.getServer());
+        for (ServerPlayer player : src.getServer().getPlayerList().getPlayers()) {
+            NicknameEvents.updateNicknameFor(player);
+        }
+        int finalRemoved = removed;
+        src.sendSuccess(() -> Component.literal("Cleared " + finalRemoved + " stuck nameplate(s) and refreshed all online players."), true);
+        return removed;
     }
 
     private static int showCurrentNickname(CommandSourceStack src) throws CommandSyntaxException {

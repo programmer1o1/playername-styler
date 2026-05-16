@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -28,10 +29,12 @@ import net.minecraft.world.scores.Team;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.ServerChatEvent;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+import net.minecraft.server.level.ServerLevel;
 import net.neoforged.fml.ModList;
 import sierra.thing.playernamestyler.PlayerNameStyler;
 import sierra.thing.playernamestyler.data.PlayerNameStylerConfig;
@@ -56,6 +59,7 @@ public class NicknameEvents {
     private static final Map<UUID, String> cachedSuffixes;
     private static final Map<UUID, Entity> nameplateEntities;
     private static final String PREFIX = "nick_";
+    private static final String NAMEPLATE_NBT_TAG = "playernamestyler_nameplate";
     private static final Set<UUID> spectators;
 
     @SubscribeEvent
@@ -164,6 +168,37 @@ public class NicknameEvents {
             if (entity == null || entity.level() != event.getLevel() || entity.isRemoved()) continue;
             entity.remove(Entity.RemovalReason.DISCARDED);
             iterator.remove();
+        }
+    }
+
+    // Remove nameplate entities from the world before the level saves so they are
+    // never written to disk. syncArmorStand detects the removal and re-creates them
+    // on the next tick, so players see no interruption.
+    @SubscribeEvent
+    public void onLevelSave(LevelEvent.Save event) {
+        if (event.getLevel().isClientSide()) {
+            return;
+        }
+        for (Entity entity : new ArrayList<Entity>(nameplateEntities.values())) {
+            if (entity != null && entity.level() == event.getLevel() && !entity.isRemoved()) {
+                entity.remove(Entity.RemovalReason.DISCARDED);
+            }
+        }
+    }
+
+    // Block any nameplate entities that survived a server crash from re-loading into
+    // the world. They are identifiable by the NBT tag we write on every spawn.
+    @SubscribeEvent
+    public void onEntityJoinLevel(EntityJoinLevelEvent event) {
+        if (event.getLevel().isClientSide()) {
+            return;
+        }
+        Entity entity = event.getEntity();
+        if ((entity instanceof ArmorStand || entity instanceof Display.TextDisplay)
+                && entity.getPersistentData().contains(NAMEPLATE_NBT_TAG)) {
+            event.setCanceled(true);
+            PlayerNameStyler.LOGGER.info("Blocked orphaned nameplate entity from loading: {} at {}",
+                    entity.getType(), entity.blockPosition());
         }
     }
 
@@ -325,6 +360,7 @@ public class NicknameEvents {
 	                return false;
 	            }
 	            display.setPos(player.getX(), player.getY() + (double)player.getBbHeight() + 0.25, player.getZ());
+	            display.getPersistentData().putBoolean(NAMEPLATE_NBT_TAG, true);
 	            player.level().addFreshEntity((Entity)display);
 	            nameplateEntities.put(player.getUUID(), display);
 	            player.connection.send((Packet)new ClientboundRemoveEntitiesPacket(new int[]{display.getId()}));
@@ -387,6 +423,7 @@ public class NicknameEvents {
         }
         stand.setCustomName(nickname);
         stand.setCustomNameVisible(true);
+        stand.getPersistentData().putBoolean(NAMEPLATE_NBT_TAG, true);
         player.level().addFreshEntity((Entity)stand);
         nameplateEntities.put(player.getUUID(), stand);
         player.connection.send((Packet)new ClientboundRemoveEntitiesPacket(new int[]{stand.getId()}));
@@ -425,6 +462,11 @@ public class NicknameEvents {
                 EntityCompat.markImpulse(stand);
             }
             player.connection.send((Packet)new ClientboundRemoveEntitiesPacket(new int[]{entity.getId()}));
+        } else if (entity != null && entity.isRemoved()) {
+            // Entity was removed from the world (e.g. pre-save cleanup) but is still
+            // tracked in our map. Clear the stale reference and re-create immediately.
+            nameplateEntities.remove(player.getUUID());
+            NicknameEvents.updateNicknameFor(player);
         } else if (player.isAlive() && (nick = PlayerNameStyler.nicknameManager.getNickname(player.getUUID())) != null && !nick.isEmpty()) {
             NicknameEvents.removeArmorStand(player);
             NicknameEvents.updateNicknameFor(player);
@@ -463,6 +505,54 @@ public class NicknameEvents {
             return "removed";
         }
         return entity.getType() + " (" + entity.getClass().getSimpleName() + ", id=" + entity.getId() + ")";
+    }
+
+    // Forcibly removes all tracked nameplate entities from the world and scans every
+    // loaded level for any orphaned ones (e.g. left over from a previous crash, or
+    // from a pre-fix version of the mod that did not write the identification tag).
+    // Returns the total number of entities removed.
+    public static int cleanupAllNameplates(MinecraftServer server) {
+        int count = 0;
+        Set<UUID> trackedUuids = new HashSet<>(nameplateEntities.keySet());
+        for (Entity entity : new ArrayList<Entity>(nameplateEntities.values())) {
+            if (entity != null && !entity.isRemoved()) {
+                entity.remove(Entity.RemovalReason.DISCARDED);
+                count++;
+            }
+        }
+        nameplateEntities.clear();
+        for (ServerLevel level : server.getAllLevels()) {
+            List<Entity> orphans = new ArrayList<>();
+            for (Entity entity : level.getEntities().getAll()) {
+                if (entity.isRemoved() || trackedUuids.contains(entity.getUUID())) continue;
+                if (!(entity instanceof ArmorStand) && !(entity instanceof Display.TextDisplay)) continue;
+                if (entity.getPersistentData().contains(NAMEPLATE_NBT_TAG) || looksLikeLegacyNameplate(entity)) {
+                    orphans.add(entity);
+                }
+            }
+            for (Entity orphan : orphans) {
+                orphan.remove(Entity.RemovalReason.DISCARDED);
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // Heuristic for entities that the mod spawned before the NBT identification tag
+    // was added. We look for the specific combination of flags this mod sets on every
+    // nameplate entity, which is unlikely to match unrelated armor stands or displays.
+    private static boolean looksLikeLegacyNameplate(Entity entity) {
+        if (entity instanceof ArmorStand stand) {
+            return stand.isInvisible()
+                    && stand.isNoGravity()
+                    && stand.isInvulnerable()
+                    && stand.isSilent()
+                    && stand.getCustomName() != null;
+        }
+        if (entity instanceof Display.TextDisplay) {
+            return entity.isNoGravity() && entity.isInvulnerable();
+        }
+        return false;
     }
 
     private static void updateSpectatorState(MinecraftServer server) {

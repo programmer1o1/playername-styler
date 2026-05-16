@@ -125,13 +125,10 @@ jobs:
           version: ${{ env.MOD_VERSION }}+mc${{ matrix.minecraft }}
           version-type: release
           changelog: |
-            # 2.0.0 Major Update
-            - Placeholder registry API + more built-in placeholders
-            - Gradient/rainbow tags + hex/format styling support
-            - Text-display nameplates by default (armor-stand fallback) with smoother interpolation
-            - Prefix/suffix placeholders in tab + above-head name
-            - Stonecutter multi-version builds for MC 1.21.1–1.21.11 with version-compat shims
-            - CI workflow + collectAllJars outputs per-version jars (and sources)
+            # 2.0.1 - Bug Fix
+            - Fix persistent floating name tags that lingered after server crashes, deaths, or unexpected disconnects (issue #2)
+            - Nameplate entities are now stripped before each level save and blocked from re-loading on startup, so orphans cannot accumulate on disk
+            - Add `/nickname cleartags` command (op level 2) to forcibly remove all stuck nameplate entities and refresh online players
             GitHub release: https://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}
 
           loaders: |
