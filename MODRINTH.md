@@ -16,6 +16,7 @@ Add configurable nicknames and styled player names across chat, tab list, and ab
 - **Simple JSON nickname storage** in your config folder (`config/nicknames.json`)
 - **Real username lookup** with `/realname`
 - **Nameplate renderer is configurable** (`text_display` default, with `armor_stand` fallback)
+- **Scoreboard `below_name` support** — shows the `below_name` display slot (e.g. health) as a second line under custom nameplates, which Minecraft otherwise hides once the name tag is replaced
 
 ## Commands
 
@@ -25,6 +26,7 @@ Add configurable nicknames and styled player names across chat, tab list, and ab
 - `/nickname set <player> <nickname>` — admin set (OP level 2)
 - `/nickname clear <player>` — admin clear (OP level 2)
 - `/nickname reload` — reload nicknames file (OP level 2)
+- `/nickname cleartags` — remove stuck/orphaned nameplate entities and refresh online players (OP level 2)
 - `/realname` — list all nicknames
 - `/realname <search>` — search nickname/real name
 
@@ -36,6 +38,7 @@ Config file: `config/playernamestyler-common.toml`
   - `%displayname%`, `%username%`, `%prefix%`, `%suffix%`, `%chatmessage%`
   - `%world%` / `%dimension%`, `%biome%`, `%ping%`, `%x%/%y%/%z%`, `%health%`, etc.
 - `nameplateRenderer` can be `text_display` or `armor_stand`
+- `showBelowName` toggles the scoreboard `below_name` line under custom nameplates (default `true`)
 
 ## Compatibility
 

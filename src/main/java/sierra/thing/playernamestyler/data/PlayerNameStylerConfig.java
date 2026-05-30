@@ -9,6 +9,7 @@ public class PlayerNameStylerConfig {
     public static final ModConfigSpec.ConfigValue<String> CHAT_FORMAT;
     public static final ModConfigSpec.ConfigValue<String> TABLIST_FORMAT;
     public static final ModConfigSpec.ConfigValue<String> NAMEPLATE_FORMAT;
+    public static final ModConfigSpec.ConfigValue<Boolean> SHOW_BELOW_NAME;
 
     static {
         BUILDER.comment(new String[]{
@@ -58,6 +59,7 @@ public class PlayerNameStylerConfig {
         CHAT_FORMAT = BUILDER.comment("Chat format string with placeholders.").define("chatFormat", "&f<%prefix%&r%displayname%%suffix%&f>%colon%&r%chatmessage%");
         TABLIST_FORMAT = BUILDER.comment("Tab-list format string with placeholders. This is the nickname (and prefix/suffix) shown in the player list (tab). Recommended: '&f<%prefix%&r%displayname%%suffix%&f>'").define("tabListFormat", "%prefix%&r%displayname%%suffix%");
         NAMEPLATE_FORMAT = BUILDER.comment("Nameplate format string with placeholders. This controls how a player's display name (above their head) appears. Placeholders: %prefix%, %displayname%, %suffix%, %username%, %world%").define("nameplateFormat", "%prefix%&r%displayname%%suffix%");
+        SHOW_BELOW_NAME = BUILDER.comment("Show the scoreboard 'below_name' display slot (e.g. health) under custom nameplates. Vanilla hides this once the real name tag is replaced; enable to re-create it as a second floating line.").define("showBelowName", true);
         SPEC = BUILDER.build();
     }
 }

@@ -125,10 +125,10 @@ jobs:
           version: ${{ env.MOD_VERSION }}+mc${{ matrix.minecraft }}
           version-type: release
           changelog: |
-            # 2.0.1 - Bug Fix
-            - Fix persistent floating name tags that lingered after server crashes, deaths, or unexpected disconnects (issue #2)
-            - Nameplate entities are now stripped before each level save and blocked from re-loading on startup, so orphans cannot accumulate on disk
-            - Add `/nickname cleartags` command (op level 2) to forcibly remove all stuck nameplate entities and refresh online players
+            # 2.0.2 - Bug Fix & Feature
+            - Fix nameplates vanishing the instant a nickname was set: freshly spawned name tags were wrongly treated as crash orphans and blocked from loading (issue #3)
+            - Add an optional second nameplate line mirroring the scoreboard "below_name" display slot (e.g. health), which Minecraft otherwise hides once the name tag is replaced (issue #4)
+            - New config option `showBelowName` (default true) to toggle the below-name line
             GitHub release: https://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}
 
           loaders: |

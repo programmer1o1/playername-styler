@@ -138,6 +138,11 @@ dependencies {
     if (project.hasProperty('luckperms_modrinth_version') && project.luckperms_modrinth_version) {
         localRuntime "maven.modrinth:luckperms:${project.luckperms_modrinth_version}"
     }
+    // BedSheet (NeoForge Carpet port) — dev-only, for spawning fake players while testing
+    // nameplates. Only published for some MC versions, so gated on a per-version property.
+    if (project.hasProperty('bedsheet_modrinth_version') && project.bedsheet_modrinth_version) {
+        localRuntime "maven.modrinth:bedsheet:${project.bedsheet_modrinth_version}"
+    }
 }
 
 var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {

@@ -11,8 +11,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.numbers.StyledFormat;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.server.MinecraftServer;
@@ -24,7 +26,10 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.scores.DisplaySlot;
+import net.minecraft.world.scores.Objective;
 import net.minecraft.world.scores.PlayerTeam;
+import net.minecraft.world.scores.ReadOnlyScoreInfo;
 import net.minecraft.world.scores.Team;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -58,8 +63,20 @@ public class NicknameEvents {
     private static final Map<UUID, String> cachedPrefixes;
     private static final Map<UUID, String> cachedSuffixes;
     private static final Map<UUID, Entity> nameplateEntities;
+    private static final Map<UUID, Entity> belowNameEntities;
+    private static final Map<UUID, Component> cachedBelowNameText;
     private static final String PREFIX = "nick_";
     private static final String NAMEPLATE_NBT_TAG = "playernamestyler_nameplate";
+    // Vertical offsets, added to the player's eye-top, that stack lines above the head.
+    private static final double NAMEPLATE_TEXT_OFFSET = 0.25;
+    private static final double NAMEPLATE_STAND_OFFSET = 0.0;
+    // When a below-name line is also shown, the nameplate moves up one row so the two
+    // stack cleanly and the lower line clears the player model.
+    private static final double NAMEPLATE_TEXT_OFFSET_STACKED = 0.50;
+    private static final double NAMEPLATE_STAND_OFFSET_STACKED = 0.25;
+    // The below-name line takes the nameplate's normal single-line height.
+    private static final double BELOW_NAME_TEXT_OFFSET = 0.25;
+    private static final double BELOW_NAME_STAND_OFFSET = 0.0;
     private static final Set<UUID> spectators;
 
     @SubscribeEvent
@@ -92,6 +109,7 @@ public class NicknameEvents {
         if (player instanceof ServerPlayer) {
             ServerPlayer player2 = (ServerPlayer)player;
             NicknameEvents.removeArmorStand(player2);
+            NicknameEvents.removeBelowName(player2);
             NicknameEvents.removeFromTeam(player2);
         }
     }
@@ -150,7 +168,13 @@ public class NicknameEvents {
             if (entity == null || entity.isRemoved()) continue;
             entity.remove(Entity.RemovalReason.DISCARDED);
         }
+        for (Entity entity : new ArrayList<Entity>(belowNameEntities.values())) {
+            if (entity == null || entity.isRemoved()) continue;
+            entity.remove(Entity.RemovalReason.DISCARDED);
+        }
         nameplateEntities.clear();
+        belowNameEntities.clear();
+        cachedBelowNameText.clear();
         cachedPrefixes.clear();
         cachedSuffixes.clear();
         spectators.clear();
@@ -169,6 +193,15 @@ public class NicknameEvents {
             entity.remove(Entity.RemovalReason.DISCARDED);
             iterator.remove();
         }
+        Iterator<Map.Entry<UUID, Entity>> belowIterator = belowNameEntities.entrySet().iterator();
+        while (belowIterator.hasNext()) {
+            Map.Entry<UUID, Entity> entry = belowIterator.next();
+            Entity entity = entry.getValue();
+            if (entity == null || entity.level() != event.getLevel() || entity.isRemoved()) continue;
+            entity.remove(Entity.RemovalReason.DISCARDED);
+            cachedBelowNameText.remove(entry.getKey());
+            belowIterator.remove();
+        }
     }
 
     // Remove nameplate entities from the world before the level saves so they are
@@ -184,6 +217,11 @@ public class NicknameEvents {
                 entity.remove(Entity.RemovalReason.DISCARDED);
             }
         }
+        for (Entity entity : new ArrayList<Entity>(belowNameEntities.values())) {
+            if (entity != null && entity.level() == event.getLevel() && !entity.isRemoved()) {
+                entity.remove(Entity.RemovalReason.DISCARDED);
+            }
+        }
     }
 
     // Block any nameplate entities that survived a server crash from re-loading into
@@ -191,6 +229,13 @@ public class NicknameEvents {
     @SubscribeEvent
     public void onEntityJoinLevel(EntityJoinLevelEvent event) {
         if (event.getLevel().isClientSide()) {
+            return;
+        }
+        // Only block entities restored from disk (e.g. crash orphans). Entities the
+        // mod spawns this session also fire this event via addFreshEntity, but with
+        // loadedFromDisk() == false; blocking those would kill every nameplate the
+        // instant it is created.
+        if (!event.loadedFromDisk()) {
             return;
         }
         Entity entity = event.getEntity();
@@ -342,13 +387,21 @@ public class NicknameEvents {
 
     private static void spawnNameplateEntity(ServerPlayer player, Component nickname) {
         String mode = (String)PlayerNameStylerConfig.NAMEPLATE_RENDERER.get();
-        if (mode != null && mode.equalsIgnoreCase("text_display") && NicknameEvents.spawnTextDisplay(player, nickname)) {
+        if (mode != null && mode.equalsIgnoreCase("text_display") && NicknameEvents.spawnTextDisplay(player, nickname, nameplateEntities, NAMEPLATE_TEXT_OFFSET)) {
             return;
         }
-        NicknameEvents.spawnArmorStand(player, nickname);
+        NicknameEvents.spawnArmorStand(player, nickname, nameplateEntities, NAMEPLATE_STAND_OFFSET);
     }
 
-	    private static boolean spawnTextDisplay(ServerPlayer player, Component nickname) {
+    private static void spawnBelowNameEntity(ServerPlayer player, Component text) {
+        String mode = (String)PlayerNameStylerConfig.NAMEPLATE_RENDERER.get();
+        if (mode != null && mode.equalsIgnoreCase("text_display") && NicknameEvents.spawnTextDisplay(player, text, belowNameEntities, BELOW_NAME_TEXT_OFFSET)) {
+            return;
+        }
+        NicknameEvents.spawnArmorStand(player, text, belowNameEntities, BELOW_NAME_STAND_OFFSET);
+    }
+
+	    private static boolean spawnTextDisplay(ServerPlayer player, Component nickname, Map<UUID, Entity> target, double yOffset) {
 	        if (player == null || player.level() == null || player.connection == null) {
 	            return false;
 	        }
@@ -359,10 +412,10 @@ public class NicknameEvents {
 	            if (!NicknameEvents.configureTextDisplay(display, nickname)) {
 	                return false;
 	            }
-	            display.setPos(player.getX(), player.getY() + (double)player.getBbHeight() + 0.25, player.getZ());
+	            display.setPos(player.getX(), player.getY() + (double)player.getBbHeight() + yOffset, player.getZ());
 	            display.getPersistentData().putBoolean(NAMEPLATE_NBT_TAG, true);
 	            player.level().addFreshEntity((Entity)display);
-	            nameplateEntities.put(player.getUUID(), display);
+	            target.put(player.getUUID(), display);
 	            player.connection.send((Packet)new ClientboundRemoveEntitiesPacket(new int[]{display.getId()}));
 	            return true;
         }
@@ -404,11 +457,11 @@ public class NicknameEvents {
 	        }
 	    }
 
-	    private static void spawnArmorStand(ServerPlayer player, Component nickname) {
+	    private static void spawnArmorStand(ServerPlayer player, Component nickname, Map<UUID, Entity> target, double yOffset) {
 	        if (player == null || player.level() == null) {
 	            return;
 	        }
-	        ArmorStand stand = new ArmorStand(player.level(), player.getX(), player.getY() + (double)player.getBbHeight(), player.getZ());
+	        ArmorStand stand = new ArmorStand(player.level(), player.getX(), player.getY() + (double)player.getBbHeight() + yOffset, player.getZ());
         stand.setInvisible(true);
         stand.setNoGravity(true);
         stand.setSilent(true);
@@ -425,7 +478,7 @@ public class NicknameEvents {
         stand.setCustomNameVisible(true);
         stand.getPersistentData().putBoolean(NAMEPLATE_NBT_TAG, true);
         player.level().addFreshEntity((Entity)stand);
-        nameplateEntities.put(player.getUUID(), stand);
+        target.put(player.getUUID(), stand);
         player.connection.send((Packet)new ClientboundRemoveEntitiesPacket(new int[]{stand.getId()}));
     }
 
@@ -436,31 +489,15 @@ public class NicknameEvents {
         }
         if (player.isSpectator() || player.isCrouching()) {
             NicknameEvents.removeArmorStand(player);
+            NicknameEvents.removeBelowName(player);
             return;
         }
         Entity entity = nameplateEntities.get(player.getUUID());
         if (entity != null && !entity.isRemoved() && player.level() == entity.level()) {
-            double x = player.getX();
-            double y = player.getY() + (double)player.getBbHeight();
-            double z = player.getZ();
-            if (!(entity instanceof ArmorStand)) {
-                y += 0.25;
-            }
-            entity.teleportTo(x, y, z);
-            if (entity instanceof ArmorStand stand) {
-                stand.xo = x;
-                stand.yo = y;
-                stand.zo = z;
-                stand.xOld = x;
-                stand.yOld = y;
-                stand.zOld = z;
-                stand.setDeltaMovement(Vec3.ZERO);
-                stand.setYRot(player.getYRot());
-                stand.setXRot(0.0f);
-                stand.yRotO = stand.getYRot();
-                stand.xRotO = stand.getXRot();
-                EntityCompat.markImpulse(stand);
-            }
+            boolean stacked = NicknameEvents.hasBelowNameEntity(player);
+            NicknameEvents.positionEntity(player, entity,
+                    stacked ? NAMEPLATE_TEXT_OFFSET_STACKED : NAMEPLATE_TEXT_OFFSET,
+                    stacked ? NAMEPLATE_STAND_OFFSET_STACKED : NAMEPLATE_STAND_OFFSET);
             player.connection.send((Packet)new ClientboundRemoveEntitiesPacket(new int[]{entity.getId()}));
         } else if (entity != null && entity.isRemoved()) {
             // Entity was removed from the world (e.g. pre-save cleanup) but is still
@@ -470,6 +507,101 @@ public class NicknameEvents {
         } else if (player.isAlive() && (nick = PlayerNameStyler.nicknameManager.getNickname(player.getUUID())) != null && !nick.isEmpty()) {
             NicknameEvents.removeArmorStand(player);
             NicknameEvents.updateNicknameFor(player);
+        }
+        NicknameEvents.syncBelowName(player);
+    }
+
+    // Glue a tracked entity to the player. The offset added to the player's eye-top
+    // depends on the entity kind so multiple lines (nameplate, below-name) can stack.
+    private static void positionEntity(ServerPlayer player, Entity entity, double textOffset, double standOffset) {
+        double x = player.getX();
+        double z = player.getZ();
+        double y = player.getY() + (double)player.getBbHeight() + (entity instanceof ArmorStand ? standOffset : textOffset);
+        entity.teleportTo(x, y, z);
+        if (entity instanceof ArmorStand stand) {
+            stand.xo = x;
+            stand.yo = y;
+            stand.zo = z;
+            stand.xOld = x;
+            stand.yOld = y;
+            stand.zOld = z;
+            stand.setDeltaMovement(Vec3.ZERO);
+            stand.setYRot(player.getYRot());
+            stand.setXRot(0.0f);
+            stand.yRotO = stand.getYRot();
+            stand.xRotO = stand.getXRot();
+            EntityCompat.markImpulse(stand);
+        }
+    }
+
+    // Mirrors the vanilla "below_name" scoreboard display slot as a second floating
+    // line. Vanilla anchors that text to the real name tag, which this mod hides, so it
+    // has to be re-created. Only shown while the mod is managing the player's nameplate
+    // and the player actually has a score in the displayed objective.
+    private static void syncBelowName(ServerPlayer player) {
+        if (player == null || player.level() == null) {
+            return;
+        }
+        if (!Boolean.TRUE.equals(PlayerNameStylerConfig.SHOW_BELOW_NAME.get())) {
+            NicknameEvents.removeBelowName(player);
+            return;
+        }
+        Entity nameplate = nameplateEntities.get(player.getUUID());
+        if (nameplate == null || nameplate.isRemoved()) {
+            NicknameEvents.removeBelowName(player);
+            return;
+        }
+        Component desired = NicknameEvents.computeBelowNameText(player);
+        if (desired == null) {
+            NicknameEvents.removeBelowName(player);
+            return;
+        }
+        UUID id = player.getUUID();
+        Entity entity = belowNameEntities.get(id);
+        if (entity == null || entity.isRemoved() || entity.level() != player.level()) {
+            if (entity != null) {
+                NicknameEvents.removeBelowName(player);
+            }
+            NicknameEvents.spawnBelowNameEntity(player, desired);
+            cachedBelowNameText.put(id, desired);
+            return;
+        }
+        NicknameEvents.positionEntity(player, entity, BELOW_NAME_TEXT_OFFSET, BELOW_NAME_STAND_OFFSET);
+        if (!Objects.equals(cachedBelowNameText.get(id), desired)) {
+            NicknameEvents.applyBelowNameText(entity, desired);
+            cachedBelowNameText.put(id, desired);
+        }
+        if (player.connection != null) {
+            player.connection.send((Packet)new ClientboundRemoveEntitiesPacket(new int[]{entity.getId()}));
+        }
+    }
+
+    // Builds the below-name line exactly as vanilla's PlayerRenderer does:
+    // "<score> <objective display name>". Returns null when no objective is shown in
+    // the below_name slot or the player has no score entry for it.
+    private static Component computeBelowNameText(ServerPlayer player) {
+        MinecraftServer server = ServerPlayerCompat.getServer(player);
+        if (server == null) {
+            return null;
+        }
+        ServerScoreboard board = server.getScoreboard();
+        Objective objective = board.getDisplayObjective(DisplaySlot.BELOW_NAME);
+        if (objective == null) {
+            return null;
+        }
+        // Match vanilla PlayerRenderer: render whenever an objective occupies the slot,
+        // defaulting a missing score to 0 (a just-spawned player may have no score row yet).
+        ReadOnlyScoreInfo info = board.getPlayerScoreInfo(player, objective);
+        MutableComponent value = ReadOnlyScoreInfo.safeFormatValue(info, objective.numberFormatOrDefault(StyledFormat.NO_STYLE));
+        return Component.empty().append((Component)value).append((Component)CommonComponents.SPACE).append(objective.getDisplayName());
+    }
+
+    private static void applyBelowNameText(Entity entity, Component text) {
+        if (entity instanceof Display.TextDisplay) {
+            NicknameEvents.tryInvoke(textDisplaySetText, entity, text);
+        } else if (entity instanceof ArmorStand stand) {
+            stand.setCustomName(text);
+            stand.setCustomNameVisible(true);
         }
     }
 
@@ -483,10 +615,30 @@ public class NicknameEvents {
         }
     }
 
+    private static boolean hasBelowNameEntity(ServerPlayer player) {
+        Entity entity = belowNameEntities.get(player.getUUID());
+        return entity != null && !entity.isRemoved();
+    }
+
+    private static void removeBelowName(ServerPlayer player) {
+        if (player == null) {
+            return;
+        }
+        cachedBelowNameText.remove(player.getUUID());
+        Entity entity = belowNameEntities.remove(player.getUUID());
+        if (entity != null && entity.level() != null && !entity.isRemoved()) {
+            entity.remove(Entity.RemovalReason.DISCARDED);
+        }
+    }
+
     public static void hideArmorStandsFromSpectators(MinecraftServer server) {
         for (ServerPlayer viewer : server.getPlayerList().getPlayers()) {
             if (!viewer.isSpectator()) continue;
             for (Entity entity : nameplateEntities.values()) {
+                if (entity == null || entity.isRemoved()) continue;
+                viewer.connection.send((Packet)new ClientboundRemoveEntitiesPacket(new int[]{entity.getId()}));
+            }
+            for (Entity entity : belowNameEntities.values()) {
                 if (entity == null || entity.isRemoved()) continue;
                 viewer.connection.send((Packet)new ClientboundRemoveEntitiesPacket(new int[]{entity.getId()}));
             }
@@ -514,13 +666,22 @@ public class NicknameEvents {
     public static int cleanupAllNameplates(MinecraftServer server) {
         int count = 0;
         Set<UUID> trackedUuids = new HashSet<>(nameplateEntities.keySet());
+        trackedUuids.addAll(belowNameEntities.keySet());
         for (Entity entity : new ArrayList<Entity>(nameplateEntities.values())) {
             if (entity != null && !entity.isRemoved()) {
                 entity.remove(Entity.RemovalReason.DISCARDED);
                 count++;
             }
         }
+        for (Entity entity : new ArrayList<Entity>(belowNameEntities.values())) {
+            if (entity != null && !entity.isRemoved()) {
+                entity.remove(Entity.RemovalReason.DISCARDED);
+                count++;
+            }
+        }
         nameplateEntities.clear();
+        belowNameEntities.clear();
+        cachedBelowNameText.clear();
         for (ServerLevel level : server.getAllLevels()) {
             List<Entity> orphans = new ArrayList<>();
             for (Entity entity : level.getEntities().getAll()) {
@@ -587,6 +748,8 @@ public class NicknameEvents {
         cachedPrefixes = new HashMap<UUID, String>();
         cachedSuffixes = new HashMap<UUID, String>();
         nameplateEntities = new HashMap<UUID, Entity>();
+        belowNameEntities = new HashMap<UUID, Entity>();
+        cachedBelowNameText = new HashMap<UUID, Component>();
         spectators = new HashSet<UUID>();
         try {
             armorStandSetMarker = ArmorStand.class.getDeclaredMethod("setMarker", Boolean.TYPE);
