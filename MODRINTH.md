@@ -11,7 +11,8 @@ Add configurable nicknames and styled player names across chat, tab list, and ab
   - Minecraft `&` color/format codes (`&a`, `&6`, `&l`, `&r`, etc.)
   - Hex colors (`&#RRGGBB` and `<#RRGGBB>`)
   - Tags like `<bold>`, `<red>`, `<reset>`
-  - `<gradient:#RRGGBB:#RRGGBB>text</gradient>` and `<rainbow>text</rainbow>`
+  - Gradients (MiniMessage syntax): hex and/or named color stops, two or more stops, and an optional phase — e.g. `<gradient:#FF0000:#00FF00>`, `<gradient:red:blue>`, `<gradient:gold:green:aqua>`, `<gradient:#FF0000:#00FF00:0.5>` (hex must be 6-digit `#RRGGBB`)
+  - `<rainbow>text</rainbow>`
 - **LuckPerms prefix/suffix integration** *(optional via `%prefix%` / `%suffix%`; empty when LuckPerms is not installed)*
 - **Simple JSON nickname storage** in your config folder (`config/nicknames.json`)
 - **Real username lookup** with `/realname`

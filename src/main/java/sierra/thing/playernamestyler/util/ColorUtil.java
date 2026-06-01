@@ -1,7 +1,9 @@
 package sierra.thing.playernamestyler.util;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -18,7 +20,7 @@ public class ColorUtil {
     private static final Pattern COLOR_TAG = Pattern.compile("<([a-zA-Z_]+)>");
     private static final Pattern AMP_CODE = Pattern.compile("(?i)&([0-9A-FK-OR])");
     private static final Pattern AMP_HEX = Pattern.compile("(?i)&\\#([A-F0-9]{6})");
-    private static final Pattern GRADIENT_OPEN = Pattern.compile("(?i)<gradient:#([A-F0-9]{6}):#([A-F0-9]{6})>");
+    private static final Pattern GRADIENT_OPEN = Pattern.compile("(?i)<gradient(?::([^>]+))?>");
     private static final Pattern RAINBOW_OPEN = Pattern.compile("(?i)<rainbow>");
     private static final Pattern FIGURA_TAG = Pattern.compile(":(?!#)[^:]+:");
     private static final Map<String, ChatFormatting> COLOR_NAMES = new HashMap<String, ChatFormatting>();
@@ -127,11 +129,16 @@ public class ColorUtil {
             if (closeStart == -1) {
                 break;
             }
+            GradientSpec spec = ColorUtil.parseGradientSpec(matcher.group(1));
+            if (spec == null) {
+                // Not a valid MiniMessage gradient spec; leave the tag as literal text.
+                output.append(input, searchFrom, openEnd);
+                searchFrom = openEnd;
+                continue;
+            }
             output.append(input, searchFrom, openStart);
-            int startRgb = ColorUtil.parseHexRgb(matcher.group(1));
-            int endRgb = ColorUtil.parseHexRgb(matcher.group(2));
             String inner = input.substring(openEnd, closeStart);
-            output.append(ColorUtil.applyGradientToText(inner, startRgb, endRgb));
+            output.append(ColorUtil.applyGradientToText(inner, spec));
             searchFrom = closeStart + "</gradient>".length();
         }
         output.append(input, searchFrom, input.length());
@@ -159,11 +166,28 @@ public class ColorUtil {
         return output.toString();
     }
 
-    private static String applyGradientToText(String text, int startRgb, int endRgb) {
+    // Parsed <gradient:...> parameters. Negative phase is normalized up front
+    // (colors reversed, phase mapped into [0,1)) to mirror Adventure's GradientTag.
+    private static final class GradientSpec {
+        final int[] colors;
+        final double phase;
+
+        GradientSpec(int[] colors, double phase) {
+            this.colors = colors;
+            this.phase = phase;
+        }
+    }
+
+    private static String applyGradientToText(String text, GradientSpec spec) {
         int visibleChars = ColorUtil.countEffectVisibleChars(text);
         if (visibleChars == 0 || visibleChars > MAX_EFFECT_VISIBLE_CHARS) {
             return text;
         }
+        int[] colors = spec.colors;
+        // Mirror Adventure GradientTag#init(): spread the stops evenly across the
+        // visible characters, and scale the phase into the same color-index space.
+        double multiplier = visibleChars == 1 ? 0.0 : (double)(colors.length - 1) / (double)(visibleChars - 1);
+        double phase = spec.phase * (colors.length - 1);
         StringBuilder out = new StringBuilder(text.length() + visibleChars * 10);
         int visibleIndex = 0;
         for (int i = 0; i < text.length(); ) {
@@ -182,14 +206,110 @@ public class ColorUtil {
                     continue;
                 }
             }
-            float t = visibleChars == 1 ? 0.0f : (float)visibleIndex / (float)(visibleChars - 1);
-            int rgb = ColorUtil.lerpRgb(startRgb, endRgb, t);
+            int rgb = ColorUtil.gradientColorAt(colors, multiplier, phase, visibleIndex);
             out.append("<#").append(ColorUtil.toHexRgb(rgb)).append(">");
             out.append(c);
             ++i;
             ++visibleIndex;
         }
         return out.toString();
+    }
+
+    // Mirror of Adventure GradientTag#color(): wrap around the color list so
+    // non-zero phases preserve an even cycle.
+    private static int gradientColorAt(int[] colors, double multiplier, double phase, int index) {
+        double position = index * multiplier + phase;
+        int lowUnclamped = (int)Math.floor(position);
+        int high = Math.floorMod((int)Math.ceil(position), colors.length);
+        int low = Math.floorMod(lowUnclamped, colors.length);
+        float t = (float)position - (float)lowUnclamped;
+        return ColorUtil.lerpRgb(colors[low], colors[high], t);
+    }
+
+    // Parse a <gradient:...> spec, matching Adventure's grammar: two or more
+    // named/#RRGGBB color stops with an optional trailing phase in [-1, 1].
+    // Returns null for anything Adventure rejects (so it stays literal text).
+    // A null spec means a bare <gradient> (Adventure default: white to black).
+    private static GradientSpec parseGradientSpec(String spec) {
+        if (spec == null) {
+            return new GradientSpec(new int[]{0xFFFFFF, 0x000000}, 0.0);
+        }
+        if (spec.isEmpty()) {
+            return null;
+        }
+        String[] parts = spec.split(":");
+        List<Integer> colors = new ArrayList<Integer>(parts.length);
+        double phase = 0.0;
+        for (int i = 0; i < parts.length; i++) {
+            String token = parts[i].trim();
+            if (token.isEmpty()) {
+                return null;
+            }
+            Integer rgb = ColorUtil.resolveColorToken(token);
+            if (rgb != null) {
+                colors.add(rgb);
+                continue;
+            }
+            // A non-color token is only valid as the final argument: the phase.
+            if (i == parts.length - 1) {
+                Double parsed = ColorUtil.parsePhase(token);
+                if (parsed != null && parsed.doubleValue() >= -1.0 && parsed.doubleValue() <= 1.0) {
+                    phase = parsed.doubleValue();
+                    break;
+                }
+            }
+            return null;
+        }
+        if (colors.size() < 2) {
+            return null;
+        }
+        int[] arr = new int[colors.size()];
+        for (int i = 0; i < arr.length; i++) {
+            arr[i] = colors.get(i).intValue();
+        }
+        if (phase < 0.0) {
+            // Adventure: reverse the stops and map phase from [-1,0) into [0,1).
+            for (int a = 0, b = arr.length - 1; a < b; a++, b--) {
+                int tmp = arr[a];
+                arr[a] = arr[b];
+                arr[b] = tmp;
+            }
+            phase = 1.0 + phase;
+        }
+        return new GradientSpec(arr, phase);
+    }
+
+    private static Double parsePhase(String token) {
+        try {
+            double d = Double.parseDouble(token);
+            if (Double.isNaN(d) || Double.isInfinite(d)) {
+                return null;
+            }
+            return Double.valueOf(d);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    // Resolve a single gradient stop: 6-digit #RRGGBB or a named color. 3-digit
+    // hex is intentionally NOT accepted, matching MiniMessage/LuckPerms.
+    private static Integer resolveColorToken(String token) {
+        if (token.startsWith("#")) {
+            String hex = token.substring(1);
+            if (hex.length() != 6) {
+                return null;
+            }
+            try {
+                return Integer.valueOf(Integer.parseInt(hex, 16) & 0xFFFFFF);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        ChatFormatting fmt = COLOR_NAMES.get(token.toLowerCase(Locale.ROOT));
+        if (fmt != null && fmt.getColor() != null) {
+            return Integer.valueOf(fmt.getColor().intValue() & 0xFFFFFF);
+        }
+        return null;
     }
 
     private static String applyRainbowToText(String text) {
@@ -363,7 +483,7 @@ public class ColorUtil {
             return "";
         }
         text = AMP_CODE.matcher(text).replaceAll("");
-        text = text.replaceAll("(?i)<gradient:#([A-F0-9]{6}):#([A-F0-9]{6})>", "");
+        text = text.replaceAll("(?i)<gradient(?::[^>]+)?>", "");
         text = HEX_TAG.matcher(text).replaceAll("");
         text = COLOR_TAG.matcher(text).replaceAll("");
         text = text.replaceAll("</?[a-zA-Z_]+>", "");
@@ -374,7 +494,29 @@ public class ColorUtil {
         if (input == null) {
             return null;
         }
-        return FIGURA_TAG.matcher(input).replaceAll("");
+        if (input.indexOf('<') == -1) {
+            return FIGURA_TAG.matcher(input).replaceAll("");
+        }
+        // Only strip :emoji: tokens in plain-text segments, never inside <...> tags
+        // (e.g. <gradient:red:blue> must keep its :red: from being eaten).
+        StringBuilder out = new StringBuilder(input.length());
+        int pos = 0;
+        while (pos < input.length()) {
+            int tagStart = input.indexOf('<', pos);
+            if (tagStart == -1) {
+                out.append(FIGURA_TAG.matcher(input.substring(pos)).replaceAll(""));
+                break;
+            }
+            int tagEnd = input.indexOf('>', tagStart);
+            if (tagEnd == -1) {
+                out.append(FIGURA_TAG.matcher(input.substring(pos)).replaceAll(""));
+                break;
+            }
+            out.append(FIGURA_TAG.matcher(input.substring(pos, tagStart)).replaceAll(""));
+            out.append(input, tagStart, tagEnd + 1);
+            pos = tagEnd + 1;
+        }
+        return out.toString();
     }
 
     private static void appendStyled(MutableComponent into, String text, Integer color, Set<ChatFormatting> formats) {

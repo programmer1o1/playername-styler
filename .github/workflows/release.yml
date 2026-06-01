@@ -125,10 +125,11 @@ jobs:
           version: ${{ env.MOD_VERSION }}+mc${{ matrix.minecraft }}
           version-type: release
           changelog: |
-            # 2.0.2 - Bug Fix & Feature
-            - Fix nameplates vanishing the instant a nickname was set: freshly spawned name tags were wrongly treated as crash orphans and blocked from loading (issue #3)
-            - Add an optional second nameplate line mirroring the scoreboard "below_name" display slot (e.g. health), which Minecraft otherwise hides once the name tag is replaced (issue #4)
-            - New config option `showBelowName` (default true) to toggle the below-name line
+            # 2.0.3 - Gradient Fix
+            - Fix gradient tags rendering as plain text inside LuckPerms prefixes/suffixes and name formats (issue #5)
+            - Full MiniMessage gradient parity: named color stops (`<gradient:red:blue>`), three or more stops, and an optional phase, alongside the existing `<gradient:#RRGGBB:#RRGGBB>` form
+            - Named-color gradients now render correctly on the tab list and above-head nameplate (previously the color name was stripped there)
+            - Note: gradient hex must be 6-digit (`#RRGGBB`); 3-digit hex is not accepted, matching MiniMessage
             GitHub release: https://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}
 
           loaders: |

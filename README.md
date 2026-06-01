@@ -29,5 +29,5 @@ Build and collect all jars into `all-jars/`:
 `all-jars/` is a build artifact folder and is gitignored.
 
 Artifacts will be named like:
-- `playernamestyler-2.0.2-mc1.21.4.jar`
-- `playernamestyler-2.0.2-mc1.21.4-sources.jar`
+- `playernamestyler-2.0.3-mc1.21.4.jar`
+- `playernamestyler-2.0.3-mc1.21.4-sources.jar`
